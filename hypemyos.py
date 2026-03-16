@@ -3,15 +3,22 @@ import subprocess
 import os
 import platform
 import argparse
+import signal
 
-# tui
+# SIGABRT handler
 
-def tui_print_header():
-    print("=" * 50)
-    print("  HypeMyOS - make HyperOS more hype ᕙ(•̀ ᗜ •́)ᕗ")
-    print("=" * 50)
+def _sigabrt_handler(signum, frame):
+    print("\n(˶°ㅁ°) !! Incompatible processor.", file=sys.stderr)
+    print("This Qt build requires the following features:", file=sys.stderr)
+    print("    sse4.2 popcnt", file=sys.stderr)
+    print("consider using --tui instead uwu", file=sys.stderr)
+    sys.exit(1)
 
-def tui_get_adb_path():
+signal.signal(signal.SIGABRT, _sigabrt_handler)
+
+# Shared helpers
+
+def get_adb_path():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     system = platform.system().lower()
     if system == "windows":
@@ -27,222 +34,341 @@ def tui_get_adb_path():
         return full_path
     return "adb"
 
-def tui_check_adb(adb_path):
+def check_adb_devices(adb_path):
+    """Returns (ok, message)"""
     try:
         subprocess.run([adb_path, "version"], capture_output=True, check=True)
         result = subprocess.run([adb_path, "devices"], capture_output=True, text=True, check=True)
         lines = result.stdout.strip().split('\n')
         devices = [line for line in lines if '\tdevice' in line]
         if not devices:
-            print("(˶°ㅁ°) !! WARNING: No devices found in device mode.")
-            print("Make sure your device is connected and USB debugging is enabled.")
-            print()
-        else:
-            print(f"◝(ᵔᗜᵔ)◜ Found {len(devices)} device(s).")
-            print()
+            return False, "No devices found. Connect your phone and enable USB debugging."
+        return True, f"{len(devices)} device(s) connected."
     except (subprocess.CalledProcessError, FileNotFoundError):
-        print(f"(˶°ㅁ°) !! ERROR: ADB not found at '{adb_path}' or in PATH.")
-        print("Please place platform-tools in the appropriate folder:")
-        print("  - Windows: .\\platform-tools-windows\\adb.exe")
-        print("  - Linux: ./platform-tools-linux/adb")
-        print("or install Android SDK Platform Tools and add adb to PATH.")
-        print()
+        return False, f"ADB not found at '{adb_path}' or in PATH."
 
-def tui_prompt_choice(prompt, options, allow_skip=False):
-    """Show numbered options, return chosen value or None if skipped."""
-    print(prompt)
-    for i, opt in enumerate(options, 1):
-        print(f"  {i}) {opt}")
-    if allow_skip:
-        print("  0) Don't change / skip")
-    while True:
-        raw = input("Choice: ").strip()
-        if allow_skip and raw == "0":
-            return None
-        if raw.isdigit():
-            idx = int(raw)
-            if 1 <= idx <= len(options):
-                return options[idx - 1]
-        print("Invalid choice, try again.")
-
-def tui_prompt_yes_no(prompt):
-    while True:
-        raw = input(f"{prompt} [y/N]: ").strip().lower()
-        if raw in ("y", "yes"):
-            return True
-        if raw in ("", "n", "no"):
-            return False
-        print("Please enter y or n.")
-
-def tui_show_help():
-    text = """
-TUI mode by MalikHw47
-
-[deviceLevelList]
-Many apps (and Xiaomi system apps) use deviceLevelList to determine
-device class: 1 = low class, 3 = high class.
-Changing CPU/GPU values here enables blur and complex animations
-(e.g., in recents, folders, lock screen).
-Usually doesn't cause lag even on weaker devices.
-Tip: use the same values for CPU and GPU.
-
-[computility]
-Similar to deviceLevelList but has a much greater impact on
-animations and effects.
-  1  - max performance, minimum distractions
-  3  - ideal balance between beauty and performance
-  6  - lots of blur/animations, may lag on weaker devices
-(˶°ㅁ°) !! Advanced textures work strangely with values below 4.
-
-[Other settings]
-Advanced textures  - enables "Advanced textures" in
-                     Settings -> Display & brightness -> Screen.
-                     Looks very nice but may consume more power.
-Window-level blur  - enables blur behind some windows (e.g., dialogs).
-Stacked recents    - enables iOS-like stacked recent apps style.
-                     Requires the latest system launcher.
-──────────────────────────────────────────────────
-"""
-    print(text)
-
-def tui_build_commands(device_checked, device_cpu, device_gpu,
-                       cpu_comp, gpu_comp,
-                       texture_val, blur_val, recent_checked):
+def build_commands(device_checked, device_cpu, device_gpu,
+                   cpu_comp, gpu_comp,
+                   texture_val, blur_val, recent_checked):
     commands = []
-
     if device_checked:
-        cmd = f'settings put system deviceLevelList "v:1,c:{device_cpu},g:{device_gpu}"'
-        commands.append(cmd)
-
+        commands.append(f'settings put system deviceLevelList "v:1,c:{device_cpu},g:{device_gpu}"')
     if cpu_comp is not None:
-        cmd = (f'service call miui.mqsas.IMQSNative 21 i32 1 s16 "setprop" i32 1 '
-               f's16 "persist.sys.computility.cpulevel {cpu_comp}" '
-               f's16 "/storage/emulated/0/log.txt" i32 600')
-        commands.append(cmd)
-
+        commands.append(
+            f'service call miui.mqsas.IMQSNative 21 i32 1 s16 "setprop" i32 1 '
+            f's16 "persist.sys.computility.cpulevel {cpu_comp}" '
+            f's16 "/storage/emulated/0/log.txt" i32 600'
+        )
     if gpu_comp is not None:
-        cmd = (f'service call miui.mqsas.IMQSNative 21 i32 1 s16 "setprop" i32 1 '
-               f's16 "persist.sys.computility.gpulevel {gpu_comp}" '
-               f's16 "/storage/emulated/0/log.txt" i32 600')
-        commands.append(cmd)
-
+        commands.append(
+            f'service call miui.mqsas.IMQSNative 21 i32 1 s16 "setprop" i32 1 '
+            f's16 "persist.sys.computility.gpulevel {gpu_comp}" '
+            f's16 "/storage/emulated/0/log.txt" i32 600'
+        )
     if texture_val is not None:
-        bool_val = "true" if texture_val == "Enable" else "false"
-        cmd = (f'service call miui.mqsas.IMQSNative 21 i32 1 s16 "setprop" i32 1 '
-               f's16 "persist.sys.background_blur_supported {bool_val}" '
-               f's16 "/storage/emulated/0/log.txt" i32 600')
-        commands.append(cmd)
-
+        bool_val = "true" if texture_val else "false"
+        commands.append(
+            f'service call miui.mqsas.IMQSNative 21 i32 1 s16 "setprop" i32 1 '
+            f's16 "persist.sys.background_blur_supported {bool_val}" '
+            f's16 "/storage/emulated/0/log.txt" i32 600'
+        )
     if blur_val is not None:
-        disable = "0" if blur_val == "Enable" else "1"
-        cmd = f"settings put global disable_window_blurs {disable}"
-        commands.append(cmd)
-
+        disable = "0" if blur_val else "1"
+        commands.append(f"settings put global disable_window_blurs {disable}")
     if recent_checked:
         commands.append("settings put global task_stack_view_layout_style 2")
-
     return commands
 
-def tui_apply_commands(adb_path, commands):
-    success_count = 0
-    errors = []
+def run_adb_commands(adb_path, commands):
+    success, errors = 0, []
     for cmd in commands:
         try:
             result = subprocess.run([adb_path, "shell", cmd],
                                     capture_output=True, text=True, timeout=10, check=False)
             if result.returncode == 0:
-                success_count += 1
+                success += 1
             else:
-                errors.append(f"CMD : {cmd}\nERR : {result.stderr.strip()}")
+                errors.append(f"{cmd}\n  -> {result.stderr.strip()}")
         except subprocess.TimeoutExpired:
-            errors.append(f"CMD : {cmd}\nERR : Timeout (10 sec)")
+            errors.append(f"{cmd}\n  -> Timeout (10 sec)")
         except Exception as e:
-            errors.append(f"CMD : {cmd}\nERR : {e}")
+            errors.append(f"{cmd}\n  -> {e}")
+    return success, errors
 
-    if errors:
-        print(f"\n(˶°ㅁ°) !! Result: {success_count} OK, {len(errors)} failed.")
-        for err in errors[:3]:
-            print(err)
-    else:
-        print(f"\n◝(ᵔᗜᵔ)◜ All {success_count} commands executed successfully.")
+# tui
 
 def run_tui():
-    adb_path = tui_get_adb_path()
-    tui_print_header()
-    tui_check_adb(adb_path)
+    import curses
 
-    while True:
-        print("\nMain menu:")
-        print("  1) Apply settings")
-        print("  2) Reboot device")
-        print("  3) Help")
-        print("  4) About")
-        print("  0) Exit")
-        choice = input("Choice: ").strip()
+    adb_path = get_adb_path()
 
-        if choice == "0":
-            print("Bye! 𐔌՞. .՞𐦯")
-            break
+    LEVELS_3 = ["1", "2", "3"]
+    LEVELS_6 = ["Don't change", "1", "2", "3", "4", "5", "6"]
+    ON_OFF   = ["Don't change", "Enable", "Disable"]
 
-        elif choice == "1":
-            print("\n── deviceLevelList ──────────────────────────────")
-            modify_device = tui_prompt_yes_no("Modify deviceLevelList?")
-            device_cpu = device_gpu = None
-            if modify_device:
-                device_cpu = tui_prompt_choice("CPU level:", ["1", "2", "3"])
-                device_gpu = tui_prompt_choice("GPU level:", ["1", "2", "3"])
+    state = {
+        "modify_device": False,
+        "device_cpu":    0,
+        "device_gpu":    0,
+        "cpu_comp":      0,
+        "gpu_comp":      0,
+        "texture":       0,
+        "blur":          0,
+        "recents":       False,
+    }
 
-            print("\n── computility ──────────────────────────────────")
-            cpu_comp = tui_prompt_choice("CPU computility:", ["1", "2", "3", "4", "5", "6"], allow_skip=True)
-            gpu_comp = tui_prompt_choice("GPU computility:", ["1", "2", "3", "4", "5", "6"], allow_skip=True)
+    HELP_DEVICE = (
+        "deviceLevelList\n\n"
+        "Many apps (and naturally Xiaomi system apps) use deviceLevelList to\n"
+        "determine the device class, 1 - low class, 3 - high class.\n"
+        "By changing the CPU and GPU values in deviceLevelList, you can enable\n"
+        "blur and complex animations in different parts of the system\n"
+        "(e.g., in recents, folders, and on the lock screen).\n"
+        "Usually doesn't cause lag even on weaker devices.\n\n"
+        "I recommend using the same values for CPU and GPU."
+    )
+    HELP_COMP = (
+        "computility\n\n"
+        "Similar to deviceLevelList, but has a much greater impact on\n"
+        "animations and effects in the system.\n"
+        "Low-end: 1-2  |  Mid-range: 2-3  |  Flagship: 4-6\n\n"
+        "Recommended values:\n"
+        "  1 - maximum performance and minimum distractions\n"
+        "  3 - ideal balance between beauty and performance\n"
+        "  6 - lots of blur effects and animations, may lag on weak devices\n\n"
+        "(˶°ㅁ°) !! Advanced textures work strangely with values below 4."
+    )
+    HELP_OTHER = (
+        "Other settings\n\n"
+        "Advanced textures - enables the \"Advanced textures\" setting in\n"
+        "  Settings -> Display & brightness -> Screen.\n"
+        "  Looks very nice, but may consume significantly more power.\n\n"
+        "Window-level blur - enables blur effects behind some windows\n"
+        "  (e.g., behind warnings and dialogs).\n\n"
+        "Stacked recents - enables the iOS-like \"Stacked\" recent apps style.\n"
+        "  Requires the latest system launcher.\n"
+        "  You can change the style back through settings.\n\n"
+        "TUI mode by MalikHw47"
+    )
 
-            print("\n── Other ─────────────────────────────────────────")
-            texture_val = tui_prompt_choice("Advanced textures:", ["Enable", "Disable"], allow_skip=True)
-            blur_val    = tui_prompt_choice("Window-level blur:", ["Enable", "Disable"], allow_skip=True)
-            recent      = tui_prompt_yes_no("Enable stacked recents?")
+    # Items list: (type, state_key, label, options_list)
+    # type: "header" | "check" | "cycle" | "action"
+    ITEMS = [
+        ("header", None,           "── deviceLevelList ─────────────────────────────", None),
+        ("check",  "modify_device","Modify deviceLevelList",                           None),
+        ("cycle",  "device_cpu",   "  CPU",                                            LEVELS_3),
+        ("cycle",  "device_gpu",   "  GPU",                                            LEVELS_3),
+        ("header", None,           "── computility ─────────────────────────────────", None),
+        ("cycle",  "cpu_comp",     "CPU",                                              LEVELS_6),
+        ("cycle",  "gpu_comp",     "GPU",                                              LEVELS_6),
+        ("header", None,           "── Other ────────────────────────────────────────", None),
+        ("cycle",  "texture",      "Advanced textures",                                ON_OFF),
+        ("cycle",  "blur",         "Window-level blur",                                ON_OFF),
+        ("check",  "recents",      "Enable stacked recents",                           None),
+        ("header", None,           "── Actions ──────────────────────────────────────", None),
+        ("action", "apply",        "[ Apply ]",                                        None),
+        ("action", "reboot",       "[ Reboot ]",                                       None),
+        ("action", "help_device",  "[ ? deviceLevelList ]",                            None),
+        ("action", "help_comp",    "[ ? computility ]",                                None),
+        ("action", "help_other",   "[ ? Other ]",                                      None),
+        ("action", "about",        "[ About ]",                                        None),
+        ("action", "quit",         "[ Quit ]",                                         None),
+    ]
 
-            commands = tui_build_commands(
-                modify_device, device_cpu, device_gpu,
-                cpu_comp, gpu_comp,
-                texture_val, blur_val, recent
-            )
+    selectable = [i for i, item in enumerate(ITEMS) if item[0] != "header"]
+    status_msg = [""]
 
-            if not commands:
-                print("\nNo settings to apply ¯\\_(ツ)_/¯")
+    def show_popup(stdscr, title, body):
+        h, w = stdscr.getmaxyx()
+        lines = body.split("\n")
+        bh = min(len(lines) + 4, h - 2)
+        bw = min(max((len(l) for l in lines), default=10) + 4, w - 2)
+        by = (h - bh) // 2
+        bx = (w - bw) // 2
+        popup = curses.newwin(bh, bw, by, bx)
+        popup.box()
+        popup.addstr(0, 2, f" {title} "[:bw - 2], curses.A_BOLD)
+        for i, line in enumerate(lines[:bh - 4]):
+            popup.addstr(i + 2, 2, line[:bw - 4])
+        popup.addstr(bh - 1, 2, " Press any key to close "[:bw - 2])
+        popup.refresh()
+        popup.getch()
+
+    def confirm_popup(stdscr, msg):
+        h, w = stdscr.getmaxyx()
+        lines = msg.split("\n")
+        bh = len(lines) + 4
+        bw = max(max((len(l) for l in lines), default=10) + 4, 32)
+        by = (h - bh) // 2
+        bx = (w - bw) // 2
+        popup = curses.newwin(bh, bw, by, bx)
+        popup.box()
+        popup.addstr(0, 2, " Confirm ", curses.A_BOLD)
+        for i, line in enumerate(lines):
+            popup.addstr(i + 2, 2, line[:bw - 4])
+        popup.addstr(bh - 1, 2, " [Y]es / [N]o "[:bw - 2])
+        popup.refresh()
+        while True:
+            k = popup.getch()
+            if k in (ord('y'), ord('Y')):
+                return True
+            if k in (ord('n'), ord('N'), 27):
+                return False
+
+    def main(stdscr):
+        curses.curs_set(0)
+        curses.start_color()
+        curses.use_default_colors()
+        curses.init_pair(1, curses.COLOR_CYAN,   -1)
+        curses.init_pair(2, curses.COLOR_GREEN,  -1)
+        curses.init_pair(3, curses.COLOR_RED,    -1)
+        curses.init_pair(4, curses.COLOR_YELLOW, -1)
+        curses.init_pair(5, curses.COLOR_BLACK,  curses.COLOR_WHITE)
+
+        ok, adb_msg = check_adb_devices(adb_path)
+        sel_pos = 0
+
+        while True:
+            stdscr.erase()
+            h, w = stdscr.getmaxyx()
+
+            title = "  HypeMyOS - make HyperOS more hype ᕙ(•̀ ᗜ •́)ᕗ  "
+            stdscr.attron(curses.color_pair(1) | curses.A_BOLD)
+            stdscr.addstr(0, max(0, (w - len(title)) // 2), title[:w])
+            stdscr.attroff(curses.color_pair(1) | curses.A_BOLD)
+
+            adb_color = curses.color_pair(2) if ok else curses.color_pair(3)
+            stdscr.attron(adb_color)
+            stdscr.addstr(1, 2, f"ADB: {adb_msg}"[:w - 2])
+            stdscr.attroff(adb_color)
+
+            focused_idx = selectable[sel_pos]
+            row = 3
+
+            for i, (itype, ikey, ilabel, ioptions) in enumerate(ITEMS):
+                if row >= h - 2:
+                    break
+                is_focused = (i == focused_idx)
+                attr = curses.color_pair(5) if is_focused else 0
+
+                if itype == "header":
+                    stdscr.attron(curses.color_pair(1))
+                    stdscr.addstr(row, 2, ilabel[:w - 2])
+                    stdscr.attroff(curses.color_pair(1))
+                elif itype == "check":
+                    mark = "X" if state[ikey] else " "
+                    stdscr.attron(attr)
+                    stdscr.addstr(row, 4, f"[{mark}] {ilabel}"[:w - 4])
+                    stdscr.attroff(attr)
+                elif itype == "cycle":
+                    val = ioptions[state[ikey]]
+                    stdscr.attron(attr)
+                    stdscr.addstr(row, 4, f"{ilabel}: < {val} >"[:w - 4])
+                    stdscr.attroff(attr)
+                elif itype == "action":
+                    stdscr.attron(attr | curses.A_BOLD)
+                    stdscr.addstr(row, 4, ilabel[:w - 4])
+                    stdscr.attroff(attr | curses.A_BOLD)
+
+                row += 1
+
+            stdscr.attron(curses.color_pair(4))
+            stdscr.addstr(h - 1, 0,
+                " ↑↓ navigate   ←→/Space cycle   Enter confirm   Q quit "[:w - 1])
+            stdscr.attroff(curses.color_pair(4))
+            if status_msg[0]:
+                stdscr.addstr(h - 2, 2, status_msg[0][:w - 4])
+
+            stdscr.refresh()
+            key = stdscr.getch()
+
+            if key in (curses.KEY_UP, ord('k')):
+                sel_pos = (sel_pos - 1) % len(selectable)
                 continue
+            if key in (curses.KEY_DOWN, ord('j')):
+                sel_pos = (sel_pos + 1) % len(selectable)
+                continue
+            if key in (ord('q'), ord('Q')):
+                break
 
-            print(f"\n∘ ∘ ∘ (°ヮ°) ? {len(commands)} command(s) will be executed.")
-            if tui_prompt_yes_no("Continue?"):
-                tui_apply_commands(adb_path, commands)
+            itype, ikey, ilabel, ioptions = ITEMS[focused_idx]
 
-        elif choice == "2":
-            if tui_prompt_yes_no("∘ ∘ ∘ (°ヮ°) ? Reboot the device?"):
-                try:
-                    subprocess.run([adb_path, "reboot"], check=True, timeout=10)
-                    print("◝(ᵔᗜᵔ)◜ Reboot command sent.")
-                except subprocess.TimeoutExpired:
-                    print("(˶°ㅁ°) !! Timeout while sending reboot command.")
-                except Exception as e:
-                    print(f"(˶°ㅁ°) !! Failed to reboot: {e}")
+            if key in (ord(' '), curses.KEY_RIGHT, curses.KEY_LEFT, 10, 13):
+                if itype == "check":
+                    state[ikey] = not state[ikey]
 
-        elif choice == "3":
-            tui_show_help()
+                elif itype == "cycle":
+                    delta = -1 if key == curses.KEY_LEFT else 1
+                    state[ikey] = (state[ikey] + delta) % len(ioptions)
 
-        elif choice == "4":
-            print("\nHypeMyOS - make HyperOS more hype ᕙ(•̀ ᗜ •́)ᕗ")
-            print("Utility for spoofing device class to unlock flagship features.")
-            print("Thanks for using! 𐔌՞. .՞𐦯\n")
+                elif itype == "action":
+                    if ikey == "quit":
+                        break
 
-        else:
-            print("Invalid choice.")
+                    elif ikey == "apply":
+                        md = state["modify_device"]
+                        dc = LEVELS_3[state["device_cpu"]] if md else None
+                        dg = LEVELS_3[state["device_gpu"]] if md else None
+                        cc_raw = LEVELS_6[state["cpu_comp"]]
+                        gc_raw = LEVELS_6[state["gpu_comp"]]
+                        cc = cc_raw if cc_raw != "Don't change" else None
+                        gc = gc_raw if gc_raw != "Don't change" else None
+                        tex_raw = ON_OFF[state["texture"]]
+                        tex = (True if tex_raw == "Enable" else False) if tex_raw != "Don't change" else None
+                        bl_raw = ON_OFF[state["blur"]]
+                        bl  = (True if bl_raw == "Enable" else False) if bl_raw != "Don't change" else None
+                        rec = state["recents"]
+
+                        cmds = build_commands(md, dc, dg, cc, gc, tex, bl, rec)
+                        if not cmds:
+                            status_msg[0] = "No settings to apply ¯\\_(ツ)_/¯"
+                        elif confirm_popup(stdscr, f"∘ ∘ ∘ (°ヮ°) ?\n{len(cmds)} command(s) will be executed."):
+                            s, errs = run_adb_commands(adb_path, cmds)
+                            if errs:
+                                show_popup(stdscr, "Result",
+                                           f"Success: {s}, Errors: {len(errs)}\n\n" +
+                                           "\n".join(errs[:3]))
+                                status_msg[0] = f"Done with {len(errs)} error(s)."
+                            else:
+                                status_msg[0] = f"◝(ᵔᗜᵔ)◜ All {s} commands OK!"
+
+                    elif ikey == "reboot":
+                        if confirm_popup(stdscr, "∘ ∘ ∘ (°ヮ°) ?\nReboot the device?"):
+                            try:
+                                subprocess.run([adb_path, "reboot"], check=True, timeout=10)
+                                status_msg[0] = "◝(ᵔᗜᵔ)◜ Reboot command sent."
+                            except Exception as e:
+                                status_msg[0] = f"(˶°ㅁ°) !! {e}"
+
+                    elif ikey == "help_device":
+                        show_popup(stdscr, "Help: deviceLevelList", HELP_DEVICE)
+                    elif ikey == "help_comp":
+                        show_popup(stdscr, "Help: computility", HELP_COMP)
+                    elif ikey == "help_other":
+                        show_popup(stdscr, "Help: Other", HELP_OTHER)
+
+                    elif ikey == "about":
+                        show_popup(stdscr, "About",
+                                   "HypeMyOS - make HyperOS more hype ᕙ(•̀ ᗜ •́)ᕗ\n\n"
+                                   "Utility for spoofing device class to unlock\n"
+                                   "flagship features on any device with HyperOS.\n\n"
+                                   "TUI mode by MalikHw47\n\n"
+                                   "Thanks for using! 𐔌՞. .՞𐦯")
+
+    curses.wrapper(main)
 
 # gui
 
 def run_gui():
-    from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-                                   QGroupBox, QCheckBox, QComboBox, QLabel, QPushButton,
-                                   QMessageBox)
-    from PySide6.QtCore import Qt
+    try:
+        from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+                                       QGroupBox, QCheckBox, QComboBox, QLabel, QPushButton,
+                                       QMessageBox)
+        from PySide6.QtCore import Qt
+    except (ImportError, RuntimeError) as e:
+        print(f"(˶°ㅁ°) !! Failed to load PySide6: {e}", file=sys.stderr)
+        print("consider using --tui instead uwu", file=sys.stderr)
+        sys.exit(1)
 
     class HypeMyOS(QMainWindow):
         def __init__(self):
@@ -250,7 +376,7 @@ def run_gui():
             self.setWindowTitle("HypeMyOS")
             self.setMinimumWidth(500)
 
-            self.adb_path = self.get_adb_path()
+            self.adb_path = get_adb_path()
 
             central_widget = QWidget()
             self.setCentralWidget(central_widget)
@@ -364,52 +490,12 @@ def run_gui():
 
             self.check_adb()
 
-        def get_adb_path(self):
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            system = platform.system().lower()
-
-            if system == "windows":
-                rel_path = os.path.join("platform-tools-windows", "adb.exe")
-            elif system == "linux":
-                rel_path = os.path.join("platform-tools-linux", "adb")
-            else:
-                return "adb"
-
-            full_path = os.path.join(script_dir, rel_path)
-            if os.path.isfile(full_path):
-                if system != "windows" and not os.access(full_path, os.X_OK):
-                    return "adb"
-                return full_path
-            else:
-                return "adb"
-
         def check_adb(self):
-            try:
-                subprocess.run([self.adb_path, "version"], capture_output=True, check=True)
-                result = subprocess.run([self.adb_path, "devices"], capture_output=True, text=True, check=True)
-                lines = result.stdout.strip().split('\n')
-                devices = [line for line in lines if '\tdevice' in line]
-                if not devices:
-                    QMessageBox.warning(self, "Warning",
-                                        "(˶°ㅁ°) !!\n"
-                                        "No devices found in device mode.\n"
-                                        "Make sure your device is connected and USB debugging is enabled.")
-            except subprocess.CalledProcessError:
-                QMessageBox.critical(self, "Error",
-                                     "(˶°ㅁ°) !!\n"
-                                     f"ADB not found at '{self.adb_path}' or in PATH.\n"
-                                     "Please place platform-tools in the appropriate folder:\n"
-                                     " - Windows: .\\platform-tools-windows\\adb.exe\n"
-                                     " - Linux: ./platform-tools-linux/adb\n"
-                                     "or install Android SDK Platform Tools and add adb to PATH.")
-            except FileNotFoundError:
-                QMessageBox.critical(self, "Error",
-                                     "(˶°ㅁ°) !!\n"
-                                     f"ADB not found at '{self.adb_path}' or in PATH.\n"
-                                     "Please place platform-tools in the appropriate folder:\n"
-                                     " - Windows: .\\platform-tools-windows\\adb.exe\n"
-                                     " - Linux: ./platform-tools-linux/adb\n"
-                                     "or install Android SDK Platform Tools and add adb to PATH.")
+            ok, msg = check_adb_devices(self.adb_path)
+            if not ok:
+                QMessageBox.warning(self, "Warning",
+                                    f"(˶°ㅁ°) !!\n{msg}\n"
+                                    "Make sure your device is connected and USB debugging is enabled.")
 
         def show_help(self, section):
             help_texts = {
@@ -438,88 +524,54 @@ Window-level blur - the name speaks for itself - enables blur effects behind som
 
 Stacked recents - enables the iOS-like "Stacked" recent apps style. To use this, you need to update the system launcher to the latest version. You can change the recents style back to one of the old ones through settings."""
             }
-
             QMessageBox.information(self, "Help", help_texts.get(section, "No information available"))
 
         def show_about(self):
-            about_text = """HypeMyOS - make HyperOS more hype ᕙ(•̀ ᗜ •́)ᕗ
+            QMessageBox.about(self, "About",
+                              "HypeMyOS - make HyperOS more hype ᕙ(•̀ ᗜ •́)ᕗ\n\n"
+                              "Utility for spoofing device class to unlock flagship features "
+                              "on any device with HyperOS.\n\n"
+                              "Thanks for using! 𐔌՞. .՞𐦯")
 
-Utility for spoofing device class to unlock flagship features on any device with HyperOS.
-
-Thanks for using! 𐔌՞. .՞𐦯"""
-
-            QMessageBox.about(self, "About", about_text)
-
-        def build_commands(self):
+        def build_commands_gui(self):
             commands = []
-
             if self.device_checkbox.isChecked():
                 cpu_val = self.device_cpu.currentText()
                 gpu_val = self.device_gpu.currentText()
-                cmd = f'settings put system deviceLevelList "v:1,c:{cpu_val},g:{gpu_val}"'
-                commands.append(cmd)
-
+                commands.append(f'settings put system deviceLevelList "v:1,c:{cpu_val},g:{gpu_val}"')
             cpu_comp = self.comp_cpu.currentText()
             if cpu_comp != "Don't change":
-                cmd = f"""service call miui.mqsas.IMQSNative 21 i32 1 s16 "setprop" i32 1 s16 "persist.sys.computility.cpulevel {cpu_comp}" s16 "/storage/emulated/0/log.txt" i32 600"""
-                commands.append(cmd)
-
+                commands.append(f"""service call miui.mqsas.IMQSNative 21 i32 1 s16 "setprop" i32 1 s16 "persist.sys.computility.cpulevel {cpu_comp}" s16 "/storage/emulated/0/log.txt" i32 600""")
             gpu_comp = self.comp_gpu.currentText()
             if gpu_comp != "Don't change":
-                cmd = f"""service call miui.mqsas.IMQSNative 21 i32 1 s16 "setprop" i32 1 s16 "persist.sys.computility.gpulevel {gpu_comp}" s16 "/storage/emulated/0/log.txt" i32 600"""
-                commands.append(cmd)
-
+                commands.append(f"""service call miui.mqsas.IMQSNative 21 i32 1 s16 "setprop" i32 1 s16 "persist.sys.computility.gpulevel {gpu_comp}" s16 "/storage/emulated/0/log.txt" i32 600""")
             texture_val = self.texture_combo.currentText()
             if texture_val != "Don't change":
                 bool_val = "true" if texture_val == "Enable" else "false"
-                cmd = f"""service call miui.mqsas.IMQSNative 21 i32 1 s16 "setprop" i32 1 s16 "persist.sys.background_blur_supported {bool_val}" s16 "/storage/emulated/0/log.txt" i32 600"""
-                commands.append(cmd)
-
+                commands.append(f"""service call miui.mqsas.IMQSNative 21 i32 1 s16 "setprop" i32 1 s16 "persist.sys.background_blur_supported {bool_val}" s16 "/storage/emulated/0/log.txt" i32 600""")
             blur_val = self.blur_combo.currentText()
             if blur_val != "Don't change":
-                if blur_val == "Enable":
-                    disable = "0"
-                else:
-                    disable = "1"
-                cmd = f"settings put global disable_window_blurs {disable}"
-                commands.append(cmd)
-
+                disable = "0" if blur_val == "Enable" else "1"
+                commands.append(f"settings put global disable_window_blurs {disable}")
             if self.recent_checkbox.isChecked():
-                cmd = "settings put global task_stack_view_layout_style 2"
-                commands.append(cmd)
-
+                commands.append("settings put global task_stack_view_layout_style 2")
             return commands
 
         def apply_settings(self):
-            commands = self.build_commands()
+            commands = self.build_commands_gui()
             if not commands:
                 QMessageBox.information(self, "Information", "No settings to apply ¯\\_(ツ)_/¯")
                 return
-
             reply = QMessageBox.question(self, "Confirmation",
                                          f"∘ ∘ ∘ (°ヮ°) ?\n{len(commands)} commands will be executed. Continue?",
                                          QMessageBox.Yes | QMessageBox.No)
             if reply != QMessageBox.Yes:
                 return
-
-            success_count = 0
-            error_messages = []
-            for cmd in commands:
-                try:
-                    full_cmd = [self.adb_path, "shell", cmd]
-                    result = subprocess.run(full_cmd, capture_output=True, text=True, timeout=10, check=False)
-                    if result.returncode == 0:
-                        success_count += 1
-                    else:
-                        error_messages.append(f"(˶°ㅁ°) !!\nCommand: {cmd}\nError: {result.stderr.strip()}")
-                except subprocess.TimeoutExpired:
-                    error_messages.append(f"(˶°ㅁ°) !!\nCommand: {cmd}\nTimeout (10 sec)")
-                except Exception as e:
-                    error_messages.append(f"(˶°ㅁ°) !!\nCommand: {cmd}\nException: {str(e)}")
-
+            success_count, error_messages = run_adb_commands(self.adb_path, commands)
             if error_messages:
                 QMessageBox.warning(self, "Result",
-                                    f"Success: {success_count}, Errors: {len(error_messages)}\n\n" + "\n\n".join(error_messages[:3]))
+                                    f"Success: {success_count}, Errors: {len(error_messages)}\n\n" +
+                                    "\n\n".join(f"(˶°ㅁ°) !!\nCommand: {e}" for e in error_messages[:3]))
             else:
                 QMessageBox.information(self, "Success!", f"◝(ᵔᗜᵔ)◜\nAll {success_count} commands executed successfully.")
 
@@ -542,9 +594,11 @@ Thanks for using! 𐔌՞. .՞𐦯"""
     sys.exit(app.exec())
 
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="HypeMyOS - make HyperOS more hype")
-    parser.add_argument("--tui", action="store_true", help="Run in TUI (terminal) mode without requiring PySide6")
+    parser.add_argument("--tui", action="store_true",
+                        help="Run in TUI (curses) mode without requiring PySide6")
     args = parser.parse_args()
 
     if args.tui:
