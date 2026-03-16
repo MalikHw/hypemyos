@@ -16,7 +16,7 @@ def _sigabrt_handler(signum, frame):
 
 signal.signal(signal.SIGABRT, _sigabrt_handler)
 
-# Shared helpers
+# shared helpers
 
 def get_adb_path():
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -30,7 +30,10 @@ def get_adb_path():
     full_path = os.path.join(script_dir, rel_path)
     if os.path.isfile(full_path):
         if system != "windows" and not os.access(full_path, os.X_OK):
-            return "adb"
+            try:
+                os.chmod(full_path, 0o755)
+            except OSError:
+                return "adb"
         return full_path
     return "adb"
 
@@ -95,7 +98,7 @@ def run_adb_commands(adb_path, commands):
             errors.append(f"{cmd}\n  -> {e}")
     return success, errors
 
-# tui
+# curses
 
 def run_tui():
     import curses
@@ -148,7 +151,7 @@ def run_tui():
         "Stacked recents - enables the iOS-like \"Stacked\" recent apps style.\n"
         "  Requires the latest system launcher.\n"
         "  You can change the style back through settings.\n\n"
-        "TUI mode by MalikHw47"
+        "TUI mode by MalikHw47 uwu"
     )
 
     # Items list: (type, state_key, label, options_list)
