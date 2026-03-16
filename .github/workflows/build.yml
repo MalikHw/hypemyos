@@ -2,8 +2,16 @@ name: Build and Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - '**'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag (e.g. v1.2.3)'
+        required: true
+      release_body:
+        description: 'Release notes'
+        required: false
 
 jobs:
   build-windows:
@@ -78,11 +86,22 @@ jobs:
           path: dist/hypemyos-linux
 
   release:
+    if: github.event_name == 'workflow_dispatch'
     needs: [build-windows, build-linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create and push tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag ${{ github.event.inputs.tag }}
+          git push origin ${{ github.event.inputs.tag }}
+
       - name: Download Windows artifact
         uses: actions/download-artifact@v4
         with:
@@ -96,7 +115,8 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event.inputs.tag }}
+          body: ${{ github.event.inputs.release_body }}
           files: |
             hypemyos-windows.exe
             hypemyos-linux
-          generate_release_notes: true
